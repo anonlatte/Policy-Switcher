@@ -1,0 +1,116 @@
+name: Android CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/wrapper-validation-action@v1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Android SDK components
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+
+      - name: Configure Gradle caching
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant execute permission for Gradle wrapper
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+          fi
+
+      - name: Run lint and unit tests
+        run: ./gradlew lint test
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload debug APK artifact
+        if: ${{ success() && hashFiles('app/build/outputs/apk/debug/*.apk') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+  release:
+    name: Release build
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    env:
+      CI: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/wrapper-validation-action@v1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Android SDK components
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+
+      - name: Configure Gradle caching
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant execute permission for Gradle wrapper
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+          fi
+
+      - name: Build release artifacts
+        run: ./gradlew assembleRelease bundleRelease
+
+      - name: Upload release artifacts for reference
+        if: ${{ success() && hashFiles('app/build/outputs/apk/release/*.apk', 'app/build/outputs/bundle/release/*.aab') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-packages
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+
+      - name: Publish GitHub release
+        if: ${{ success() && hashFiles('app/build/outputs/apk/release/*.apk', 'app/build/outputs/bundle/release/*.aab') != '' }}
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
